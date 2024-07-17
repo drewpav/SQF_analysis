@@ -1,0 +1,332 @@
+---
+title: "Name: Andrew"
+author: 
+- |
+    | 22221851: NUMBER
+date: "16/12/22"
+output: html_document
+---
+# Initial project scope
+
+>In this report, I will attempt to determine the presence of racial discrimination in the stop, question and frisk (here on referred to as SQF) exercises conducted by the New York Police Department (NYPD). I will also attempt to show that the locations these incidents occur in are also racially motivated through spatial analysis.
+
+>The Null hypothesis here is that there is no pattern between a) the race of those who are flagged for SQFs b) the locations they have been flagged in.
+
+>To lay down some historical context, I would like to quote this report by the New York Attorney General which states that the stop-and-frisk practice of the NYPD has been a recurring subject of public debate and litigation, majorly due to the focused on the very constitutionality of SQF and 'its impact on African-American, Latino, and other minority communities.' 
+>In the same year this report was written, the City of New York faced a class acion lawsuit where SQFs were deemed unconstitutional but after another series of rulings as well as passing through separate courts, the practice finally remained and was repopularised by current mayor Eric Adams as a part of his campaign. (https://ag.ny.gov/pdfs/OAG_REPORT_ON_SQF_PRACTICES_NOV_2013.pdf)
+
+What does the data used for this analysis comprise of?
+
+>The data used for this analysis comprises of 2 files  - the shapefile for police precints has been obtained from obtained from NYC Open Data (https://opendata.cityofnewyork.us), an open source database for the city of New York. The data regarding SQFs has been obtained from the NYPD section on the official New York City government page (https://www.nyc.gov/site/nypd/index.page). 
+>It is important to mention that the data inevitably does contain political biases, perhaps none more prominent than underrporting of SQFs by officers conducting them. There is a clear historical bias towards members of certain races that cannot be ignored, although it seems that the data does indicate the same as well.
+
+Other information regarding the data:
+
+> The data stored in the SQF file is in the NAD83(HARN) or EPSG 2908 CRS format which I will later convert to WGS 84 or EPSG 4326. The police precint shapefile is in WGS8d(DD)
+
+What are other limitations and assumptions during the course of this report?
+
+>The first limitation, as mentioned earlier, would have to be with the source of the data itself. The data is collected by city government officials and therefore carry common political biases, as mentioned earlier, such perhaps the manipulation of data through underrporting to make it appear as if there is an absence of discrimination in the manner of which SQFs are being conducted and the ethnicities of those who are often subjected to them.
+>Secondly, the data set only contains reports of SQFs that have been offficially logged to the data set and does not contain infromation regarding what one can call "off the book" SQFs where the thsee are conducted without following the set judicial procedures.
+
+For this analysis I will be using Ripley's K and DBSCAN. These methods.
+>DBSCAN is appropriate as I will be able to test the distance between data points using the 2 parameters of eps and minPoints.
+>Ripley's K is required to decide the number of eps I will use in DBSCAN as the biggest bugle in the K plot is usually the most efficient value.
+
+Throughout my analysis, I will also be extensively using tmap to further supplement my analysis. 
+It is important to note that all analysis is conducted at the borough level at which the data has been provided.
+
+I will now move on to the preparation of data for further analysis.
+
+# Data loading, wrangling and pre-processing
+
+I will first begin by loading in the required libraries
+
+```{r libraries}
+library(tidyverse)
+library(sf)
+library(tmap)
+library(janitor)
+library(spatstat)
+```
+
+Each library here is present for a reason: 
+>The tidyverse package - is a coherent system of packages for data manipulation, exploration and visualization 
+>The sf package - is used to represent spatial data in R 
+>The tmap package - is used to create thematic maps are in which spatial data distributions are visualized 
+>the janitor package - is used to examine and clean data. 
+>The spatstat package - contains spatial statistics with a strong focus on analysing spatial point patterns in 2D, which I will use as the primary tool for this report's analysis.
+
+## Data Loading
+
+```{r data_input}
+sqf_points <- read_csv("sqf-2021.csv", na=" ", show_col_types = FALSE)
+
+precincts <- st_read("Police Precincts/geo_export_d43f21fc-d6f1-423a-ae52-329290ecfde8.shp")
+```
+
+> Here I have loaded in the two aforementioned datasets and specified that NA values are not to be included while loading the SQF dataset.
+
+I also acknowledge that this code, as well as most of the code to follow, is not originally mine and although it has been modified, it has majorly been derived from the practice exam attempt as it was able to facilitate my ability to effectively create a template for attempting the exam due to the associative learning I had with it.
+
+## Data Wrangling
+
+> As my first step in wrangling, I will remove all data which contain coordinate errors.
+
+
+```{r coordinate_change}
+points <- sqf_points%>%
+
+  st_as_sf(., coords = c("STOP_LOCATION_X", "STOP_LOCATION_Y"), 
+                   crs = 2908)
+```
+
+>In the code above, I have used tge st_as_sf function, whcih converts foreign objects into the sf data type, here converting the Longitude and Latitude columns with the specified CRS of 2908.
+
+I will now plot a map here to visualise the data points on the outline and ensure that the CRS is correct and the points appear to be normal before moving on to further wrangling.
+
+```{r visualising_points}
+tmap_mode("plot")
+tm_shape(precincts) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(points) +
+  tm_dots(col = "navy")
+```
+
+>Using tmap, I have imposed the points of reported SQFs on the outline of police precincts in New York.
+
+Now, I will create a subset to ensure that all points lie inside the boundaries of the police precincts
+
+```{r subset}
+precincts <- precincts%>%
+  st_transform(., 2908)
+
+points_sub <- points[precincts,]
+```
+
+>It is necessary that I specify the CRS again as not doing so results in the following error - 
+Error in st_geos_binop("intersects", x, y, sparse = sparse, prepared = prepared,  : 
+  st_crs(x) == st_crs(y) is not TRUE
+>It can also be observed that there are now 8940 observations instead of 8947, which means 7 points were lying outside the specified boundaries.
+
+Since I am attempting to show racial bias in the SQFs, I will first create a seperate column of SQF incidents with those of White (and including White Hispanic) heritage
+
+```{r mix_race_subset}
+mix_white_race_points<-points_sub%>%
+  clean_names()%>%
+  filter(str_detect(suspect_race_description, 'WHITE'))
+```
+
+>Th str_detect function here pulls all rows which have the word white in the description of race and makes sure that even the incidents involcing white mixed races are included.
+>The data indicates that in 2021, those of white heritage were involved in 2443 incidents out of a total of 8940. This means that roughly 3 in 4 searches involved other ethnicities, a stark contrast to the supposedly random nature of SQFs as there seems to be a pattern developing here.
+
+To further show the discrimination observable in supposedly random SQFs, I will create a set of incidents where the person stopped is just of white and not of mixed heritage
+
+```{r white_subset}
+white_race_points<-points_sub%>%
+  clean_names()%>%
+  filter(suspect_race_description == 'WHITE')
+```
+>Only 730 incidents out of a total of 8940 incidents involved those of white heritage, which is alarmingly low.
+
+I will now create a set of SQFs where the incidents involve a non-white ethnicity.
+
+```{r minority_subset}
+minority_points<-points_sub%>%
+  clean_names()%>%
+  filter(!(suspect_race_description == 'WHITE'))
+```
+> Using the ! after the filter, I have been able to remove all incidents of non-white minorities that are present. It is importatnt to acknowlegde that white mixed minorities have been included here as having a mixed heritage does not neccessarily excuse one from being discriminated against. Thus, I believe it is only fair to include this data in my analsys.
+
+I will now plot a map to see what the points now look like across the outlines. The data I am now working with is around 8210 points as opposed to the 8947 I had earlier.
+
+```{r minority_map}
+tmap_mode("plot")
+tm_shape(precincts) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(minority_points) +
+  tm_dots(col = "darkgreen")
+```
+
+To further emphasise on the discriminatory nature of these searches, I have represented incidents not including minorities in a tmap below
+
+```{r non_minorities_map}
+tmap_mode("plot")
+tm_shape(precincts) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(white_race_points) +
+  tm_dots(col = "darkred")
+```
+
+# Methods, Interpretation and Criticality
+## Data Analysis
+
+I will be doing Point Pattern Analysis using Ripley's K and DBSCAN. The methods will be explained when I deploy them.
+
+I will first create projections of the minority_points dataset and the precincts, along with an owin object to define the observation window of the point pattern
+
+```{r window_making}
+precincts_projected <- precincts %>%
+  st_transform(., 2908)
+
+minority_projected <- minority_points%>%
+  st_transform(., 2908)
+
+
+window <- as.owin(precincts_projected)
+plot(window)
+```
+>Both sets of data have been projected using st_transforms
+>A window is then created using the as.owin function to project these points on to
+
+In the following code, I will convert the data into two different types to make it usable in analysis - an sp object and a ppp (two-dimensional point pattern) object.
+
+```{r converting_objects}
+minority_projected_sp<- minority_projected %>%
+  as(., 'Spatial')
+
+minority_projected_sp.ppp <- ppp(x=minority_projected_sp@coords[,1],
+                          y=minority_projected_sp@coords[,2],
+                          window=window)
+```
+
+### Ripley's K
+
+The first tool I will use in my analysis is Ripley's K
+
+How does Ripley's K work?
+>The Kpois(r) line (Red) is the theoretical value of K for each distance window under a Poisson assumption of Complete Spatial Randomness. The Black line is the estimated values of K accounting for the effects of the edge of the study area.
+>The correction here specifies the treatment of points towards the edge - the border means that points towards the edge are ignored for the calculation but are included for the central points.
+(via https://andrewmaclachlan.github.io/CASA0005repo/detecting-spatial-patterns.html#ripleys-k)
+
+```{r ripleys_k}
+K <- minority_projected_sp.ppp %>%
+
+  Kest(., correction="border") %>%
+
+  plot()
+```
+> In this graph, the distance at which the value of K falls above the line is where data appears to be clustered.
+>The distance wehere the value of K is below the line shows where the data are dispersed.
+
+### DBSCAN
+
+Now I will move on to the next tool of analysis, DBSCAN
+
+Ripley’s K analysis is useful to detect the presence spatial clusters present in point data, but is unable to specify the area of interest where the clusters are occurring.
+
+DBSCAN is usful here as a density-based clustering non-parametric algorithm, where upon being given a set of points in some space, it groups together points that are closely packed together (points with many nearby neighbors), marking as outliers points that lie alone in low-density regions (whose nearest neighbors are too far away).
+
+(via https://en.wikipedia.org/wiki/DBSCAN)
+
+```{r dbscan}
+library(sp)
+
+minoritydf <- minority_projected_sp %>%
+  coordinates(.)%>%
+  as.data.frame()
+
+minoritydf_DBSCAN <- minoritydf %>%
+  fpc::dbscan(.,eps = 2500, MinPts = 125)
+
+plot(minoritydf_DBSCAN, minoritydf, main = "DBSCAN Output", frame = F)
+plot(precincts_projected$geometry, add=T)
+```
+>Although the k bulge does not indicate that the usage of 2500 eps and 125 minpts is appropriate, this is a result of estimation as well as repetitive attempts of mapping the graph that I have tried, where this has so far seemed to be the most accurate. 125 minimum points in a data set of roughly 8000 also seems to be an appropriate choice.
+
+>In a clustering with MinPts = k, we expect that core points and border points’ k-distance are within a certain range, while noise points can have much greater k-distance, thus we can observe a knee point in the k-distance plot.
+
+>The method proposed here is to compute the k-nearest neighbor distances in a matrix of points. The idea is to calculate, the average of the distances of every point to its k nearest neighbors. The value of k will be specified by the user and corresponds to MinPts. Next, these k-distances are plotted in ascending order. The aim is to determine the “knee”, which corresponds to the optimal epsilon parameter. A knee corresponds to a threshold where a sharp change occurs along the k-distance curve.
+
+(Quoting - http://sefidian.com/2020/12/18/how-to-determine-epsilon-and-minpts-parameters-of-dbscan-clustering/)
+
+I will now join the cluster data to my original data frame and convert it into an sf object
+
+```{r join_convert}
+minoritydf<- minoritydf %>%
+  mutate(dbcluster=minoritydf_DBSCAN$cluster)
+tosf <- minoritydf%>%
+  
+  st_as_sf(., coords = c("coords.x1", "coords.x2"), 
+                   crs = 2908)%>%
+  filter(dbcluster>0)
+```
+
+Here, I will plot these layers onto a map
+
+```{r map_plot}
+ggplot(data = precincts_projected) +
+
+  geom_sf() +
+  
+  geom_sf(data = tosf, size = 0.4, colour=tosf$dbcluster, fill=tosf$dbcluster)
+```
+
+>I have observed 7 distinct clusters in the SQF incidents.Super imposing these with the map of new york
+
+As we can see in the map attached below, SQF incidents occur largely in areas where minorities reside, particularly hispanic communities in the Bronx. Small clusters at the intersection of the Kings and Queens boroughs also occur in areas with majority black and hispanic population.
+
+(https://centerforpolitics.org/crystalball/wp-content/uploads/2021/06/JMC2021061701_Map-1.png)
+>taken from (https://centerforpolitics.org/crystalball/articles/notes-on-the-state-of-politics-june-23-2021/)
+
+The area of manhattan (marked by the blue cluster), considered to be an affluential area has also reported SQF incidents mot likely due to police suspicion on these minorities being present in the area.
+
+>https://www.bkmag.com/2014/03/24/nyc-ranked-6th-among-u-s-cities-with-highest-segregation-of-the-poor/
+
+To further prove my point, mapping out the incidents of burglary and robbery show that while they are dispersed across the map, these cluster in the Manhattan, especailly in the area where under 0.5% of people live in poverty.
+
+```{r robbery_subset}
+robbery<-points_sub%>%
+  clean_names()%>%
+  filter(suspect_arrest_offense == 'ROBBERY')
+```
+
+```{r burglary_subset}
+burglary<-points_sub%>%
+  clean_names()%>%
+  filter(suspect_arrest_offense == 'BURGLARY')
+```
+
+```{r robbery_map}
+tmap_mode("plot")
+tm_shape(precincts) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(robbery) +
+  tm_dots(col = "orange")
+```
+```{r burglary_map}
+tmap_mode("plot")
+tm_shape(precincts) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(burglary) +
+  tm_dots(col = "purple")
+```
+
+
+#Interpretation
+
+There is a clear racial bias on behalf of police officers conducting the SQFs towards minorities. There are also other factors that futher reiterate this bias and misbehaviour towards minorities such as the skewed number of cases where consent was given (or even askesd by officers ) and cases where officers explained why the person undergoing an SQF was stopped.
+
+According to the official (https://www.nyc.gov/site/ccrb/investigations/stop-question-and-frisk.page) SQF policy, incidents which are supposed to occur most commonly are those where officers 'request for information' in a non-threatening encounter while they also articulate the reason the person undergoing an SQF is approached for. This is not the case.
+
+The results of this review can therefore be interpreted as clearly indicative of an urgent need to:
+
+>Stop racial discrimination by police officers, which is visibly present when choosing who to conduct SQF incidents on
+>Heavily reduce the disparity between miniority SQFs and SQFs of those of white heritage.
+>Dismiss prejudices against races that officers clearly hold as indicated by the SQF incidents in the Manhattan area
+>Reduce the disparity between the areas where SQFs are conducted -  a majority of SQFs in 2021 were conducted in areas with maxmimum minority occupancy.
+
+I have added other reflections during the course of my analysis. Explanations of Ripley's K and DBSCAN have both been added in conjuction to the code chunks containing those functions
+
+#Reflection
+
+>Although I believe the analysis I have conducted is sufficient to prove both part of the research question I set out with, I believe it was necessary to use more variables in detecting clusters of discriminatory behaviour, which I was unable to due to a paucity of time and my indecisiveness.
+
+>I believe that a good variable to explore would have been the number of those stopped who had previous background cicumstances of violent crime or were known to carry weapons.
+>I also believe that an interesting aspect to observe would have been to observe the use of different degrees of physical force sufh as using handcuffs, sprays or other restraints. It would've especially been more conclusive if the data of weapons used would be analysed.
+
+>While I reflect upon the data methodologies I used, I do wish I had carried out more detailed spatial analysis such as the use of spatial autocorrelation or regression, which I was unable to due to my indeciseiveness and ultimately the paucity of time, most of which I spent gathering information on poverty and racial distribution of citizens of New York in order to provide proof that my analysis was accurate.
+
+>I must once again acknowlegde the bias in the data set due to the very nature of its collection, it is likely that there are so many more incidents of SQF that have not been reported may have been conducted in a much worse fashion than those reported.
+
+>I end by concluding that while my hypothesis was satified, there is much more analysis which could supplement it which I now lack the time to conduct.
