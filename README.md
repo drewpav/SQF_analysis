@@ -1,2 +1,2 @@
 # SQF_analysis
-Analysis of New York's SQF procedures using Ripley's K and DBSCAN in R.
+Analysis of New York's SQF procedures using spatial analysis techniques in R.
